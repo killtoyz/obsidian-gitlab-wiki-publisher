@@ -1,11 +1,10 @@
 {
-	"id": "sample-plugin",
-	"name": "Sample Plugin",
-	"version": "1.0.0",
-	"minAppVersion": "0.15.0",
-	"description": "Demonstrates some of the capabilities of the Obsidian API.",
-	"author": "Obsidian",
-	"authorUrl": "https://obsidian.md",
-	"fundingUrl": "https://obsidian.md/pricing",
-	"isDesktopOnly": false
+  "id": "gitlab-wiki-publisher",
+  "name": "GitLab Wiki Publisher",
+  "version": "1.0.0",
+  "minAppVersion": "1.0.0",
+  "description": "Normalizes Obsidian links for GitLab Wiki: removes .md, adds ./ or ../ prefix, creates folder index pages.",
+  "author": "HmelHmelko",
+  "authorUrl": "https://github.com/HmelHmelko",
+  "isDesktopOnly": true
 }

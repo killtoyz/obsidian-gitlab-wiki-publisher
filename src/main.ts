@@ -1,99 +1,92 @@
-import {App, Editor, MarkdownView, Modal, Notice, Plugin} from 'obsidian';
-import {DEFAULT_SETTINGS, MyPluginSettings, SampleSettingTab} from "./settings";
+import { Notice, Plugin, TFile, TFolder } from 'obsidian';
+import { DEFAULT_SETTINGS, GitLabWikiSettings, GitLabWikiSettingTab } from './settings';
 
-// Remember to rename these classes and interfaces!
+const RE_MD_LINK = /\[([^\]\n]+)\]\(([^)\n]+)\)/g;
+const EXTERNAL_PREFIXES = ['http://', 'https://', '//', '#', 'mailto:'];
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+export default class GitLabWikiPlugin extends Plugin {
+    settings!: GitLabWikiSettings;
 
-	async onload() {
-		await this.loadSettings();
+    async onload() {
+        await this.loadSettings();
 
-		// This creates an icon in the left ribbon.
-		this.addRibbonIcon('dice', 'Sample', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
+        this.addRibbonIcon('upload', 'GitLab Wiki: Normalize', () => this.runNormalization());
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status bar text');
+        this.addCommand({
+            id: 'normalize-gitlab-wiki',
+            name: 'Normalize links and create folder indexes',
+            callback: () => this.runNormalization(),
+        });
 
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-modal-simple',
-			name: 'Open modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'replace-selected',
-			name: 'Replace selected content',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				editor.replaceSelection('Sample editor command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-modal-complex',
-			name: 'Open modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
+        this.addSettingTab(new GitLabWikiSettingTab(this.app, this));
+    }
 
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-				return false;
-			}
-		});
+    async runNormalization() {
+        new Notice('GitLab Wiki: запуск...');
+        let created = 0;
+        let fixed = 0;
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
+        // Шаг 1: создаём index-страницы для папок
+        const allItems = this.app.vault.getAllLoadedFiles();
+        const folders = allItems.filter(f => f instanceof TFolder) as TFolder[];
 
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			new Notice("Click");
-		});
+        for (const folder of folders) {
+            if (this.isIgnoredFolder(folder)) continue;
 
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
+            const parentPath = folder.parent?.path ?? '';
+            const indexPath = parentPath ? `${parentPath}/${folder.name}.md` : `${folder.name}.md`;
 
-	}
+            if (!this.app.vault.getAbstractFileByPath(indexPath)) {
+                await this.app.vault.create(indexPath, '');
+                created++;
+            }
+        }
 
-	onunload() {
-	}
+        // Шаг 2: исправляем ссылки
+        const files = this.app.vault.getMarkdownFiles();
+        for (const file of files) {
+            if (this.isIgnoredFile(file)) continue;
+            const original = await this.app.vault.read(file);
+            const updated = this.fixLinks(original);
+            if (updated !== original) {
+                await this.app.vault.modify(file, updated);
+                fixed++;
+            }
+        }
 
-	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<MyPluginSettings>);
-	}
+        new Notice(`✓ Создано: ${created} страниц, исправлено: ${fixed} файлов`);
+    }
 
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
-}
+    isIgnoredFolder(folder: TFolder): boolean {
+        return folder.path.split('/').some(p =>
+            p.startsWith('.') || this.settings.ignoreDirs.includes(p)
+        );
+    }
 
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
+    isIgnoredFile(file: TFile): boolean {
+        const parts = file.path.split('/');
+        if (parts.some(p => p.startsWith('.') || this.settings.ignoreDirs.includes(p))) return true;
+        return this.settings.ignoreFiles.includes(file.name);
+    }
 
-	onOpen() {
-		let {contentEl} = this;
-		contentEl.setText('Woah!');
-	}
+    fixLinks(content: string): string {
+        return content.replace(RE_MD_LINK, (_, text, url) => `[${text}](${this.fixUrl(url)})`);
+    }
 
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
-	}
+    fixUrl(url: string): string {
+        if (EXTERNAL_PREFIXES.some(p => url.startsWith(p))) return url;
+        if (url.endsWith('.md')) url = url.slice(0, -3);
+        if (!url.startsWith('./') && !url.startsWith('../') && !url.startsWith('/')) url = './' + url;
+        return url;
+    }
+
+    onunload() {}
+
+    async loadSettings() {
+        this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<GitLabWikiSettings>);
+    }
+
+    async saveSettings() {
+        await this.saveData(this.settings);
+    }
 }
